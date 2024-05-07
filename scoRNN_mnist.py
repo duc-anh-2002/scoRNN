@@ -13,14 +13,15 @@ import matplotlib.pylab as plt
 import sys
 from tensorflow.keras.datasets import mnist
 from scoRNN import *
-
+tf.compat.v1.disable_eager_execution()
+# import os
+# os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 '''
 To classify images using a recurrent neural network, we consider every image
 as a sequence of single pixels. Because MNIST image shape is 28*28px, we will 
 then handle 784 steps of single pixels for every sample.
 '''
-
 
 # Network parameters
 model = 'scoRNN'
@@ -66,15 +67,6 @@ tf.random.set_seed(5544)
 np.random.seed(5544)
 
 # MNIST data
-#from tensorflow.examples.tutorials.mnist import input_data
-#mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
-
-#whole_test_data = mnist.test.images.reshape((-1, n_steps, n_input))
-#whole_test_label = mnist.test.labels
-
-#test_data = np.split(whole_test_data, 10)
-#test_label = np.split(whole_test_label, 10)
-# Load MNIST dataset
 (x_train, y_train), (x_test, y_test) = mnist.load_data()
 
 # Reshape and normalize the data
@@ -113,11 +105,21 @@ if permuteflag:
 
 # Defining RNN architecture
 def RNN(x):
-
-    # Assigning fixed permutation, if applicable
-    if permuteflag:
-        x = tf.gather(x, xpermutation, axis=1)
-
+    # Prepare data shape to match `rnn` function requirements
+    # Current data input shape: (batch_size, n_steps, n_input)
+    # Required shape: 'n_steps' tensors list of shape (batch_size, n_input)
+    
+    
+    # Permuting batch_size and n_steps
+    x = tf.transpose(x, [1, 0, 2])
+   
+    # Reshaping to (n_steps*batch_size, n_input)
+    x = tf.reshape(x, [-1, n_input])
+    
+    # Split to get a list of 'n_steps' tensors of shape (batch_size, n_input)
+    x = tf.split(x, n_steps, 0)
+    
+    
     # Create RNN cell
     if model == 'LSTM':
         rnn_cell = tf.contrib.rnn.BasicLSTMCell(n_hidden, activation=tf.nn.tanh)
@@ -125,16 +127,17 @@ def RNN(x):
     if model == 'scoRNN':
         rnn_cell = scoRNNCell(n_hidden, D = D)
     
-    # Place RNN cell into RNN, take last timestep as output
-    #outputs, states = tf.nn.dynamic_rnn(rnn_cell, x, dtype=tf.float32)
-    rnn_layer = tf.keras.layers.RNN(rnn_cell, return_sequences=True, return_state=True)
-    outputs, states = rnn_layer(x)
-    rnnoutput = outputs[:,-1]
+    # Place RNN cell into RNN, take last timestep as output    
+    # outputs, states = tf.contrib.rnn.static_rnn(rnn_cell, x, dtype=tf.float32)
+    outputs, states = tf.compat.v1.nn.static_rnn(rnn_cell, x, dtype=tf.float32)
+    rnnoutput = outputs[-1]
     
+        
     # Last layer, linear
-    #output = tf.keras.layers.Dense(inputs=rnnoutput, units=n_classes, activation=None)
+    # output = tf.layers.Dense(inputs=rnnoutput, units=n_classes, activation=None)
     output = tf.keras.layers.Dense(units=n_classes, activation=None)(rnnoutput)
     return output
+
 
 
 # Used to calculate Cayley Transform derivative
@@ -179,11 +182,13 @@ def graphlosses(xax, tr_loss, te_loss, tr_acc, te_acc):
 
 
 # Graph input
-#x = tf.placeholder("float", [None, n_steps, n_input])
-#y = tf.placeholder("float", [None, n_classes])
-x = tf.keras.Input(shape=(n_steps, n_input))
-y = tf.keras.Input(shape=(n_classes,))
-
+# x = tf.Variable(tf.zeros([None, n_steps, n_input]), dtype=tf.float32)
+x = tf.compat.v1.placeholder("float", [None, n_steps, n_input])
+y = tf.compat.v1.placeholder("float", [None, n_classes])
+# x = tf.keras.Input(shape=(n_steps, n_input))
+print('x = ', x)
+# y = tf.keras.Input(shape=(n_classes,))
+print('y = ', y)
 # Assigning to RNN function
 pred = RNN(x) 
 
@@ -200,7 +205,7 @@ class SoftmaxCrossEntropy(tf.keras.layers.Layer):
 cost = SoftmaxCrossEntropy()(pred, y)
     
 # Evaluate model
-#correct_pred = tf.equal(tf.argmax(pred,1), tf.argmax(y,1))
+# correct_pred = tf.equal(tf.argmax(pred,1), tf.argmax(y,1))
 
 # New code
 class Accuracy(tf.keras.layers.Layer):
@@ -239,13 +244,16 @@ if model == 'LSTM':
 # scoRNN training operations
 if model == 'scoRNN':
     opt2 = optimizer_dict[A_optimizer](learning_rate=A_lr)
-    trainable_vars = model.trainable_variables
-    Wvar = [v for v in trainable_vars if 'W:0' in v.name][0]
-    Avar = [v for v in trainable_vars if 'A:0' in v.name][0]
-
-    #Wvar = [v for v in tf.trainable_variables() if 'W:0' in v.name][0]
-    #Avar = [v for v in tf.trainable_variables() if 'A:0' in v.name][0]
-    othervarlist = [v for v in trainable_vars if v not in \
+    # trainable_vars = model.trainable_variables
+    # Wvar = [v for v in trainable_vars if 'W:0' in v.name][0]
+    # Avar = [v for v in trainable_vars if 'A:0' in v.name][0]
+    
+    # for v in tf.compat.v1.trainable_variables():
+    #     print(v.name)
+        
+    Wvar = [v for v in tf.compat.v1.trainable_variables() if 'W:0' in v.name][0]
+    Avar = [v for v in tf.compat.v1.trainable_variables() if 'A:0' in v.name][0]
+    othervarlist = [v for v in tf.compat.v1.trainable_variables() if v not in \
                    [Wvar, Avar]]
     
     # Getting gradients
@@ -257,16 +265,15 @@ if model == 'scoRNN':
                      othervarlist))  
     
     # Updating variables
-    #newW = tf.placeholder(tf.float32, Wvar.get_shape())
-    #updateW = tf.assign(Wvar, newW)
-    newW = tf.Variable(tf.zeros_like(Wvar), trainable=False)
-    gradA = tf.Variable(tf.zeros_like(Avar), trainable=False)
-
+    newW = tf.compat.v1.placeholder(tf.float32, Wvar.get_shape())
+    updateW = tf.compat.v1.assign(Wvar, newW)
+    # newW = tf.Variable(tf.zeros_like(Wvar), trainable=False)
+    # gradA = tf.Variable(tf.zeros_like(Avar), trainable=False)
+    gradA = tf.compat.v1.placeholder(tf.float32, Avar.get_shape())
     # Applying hidden-to-hidden gradients
-    updateW = Wvar.assign(newW)
     applygradA = opt2.apply_gradients([(gradA, Avar)])
-    #gradA = tf.placeholder(tf.float32, Avar.get_shape())
-    #applygradA = opt2.apply_gradients([(gradA, Avar)])
+    
+    # applygradA = opt2.apply_gradients([(gradA, Avar)])
 
 # Plotting lists
 epochs_plt = []

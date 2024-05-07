@@ -6,7 +6,6 @@ random sequence of numbers and the other is a marker of zeros and ones.  The
 digits marked with one are to be added together.
 '''
 
-
 # Import modules
 from __future__ import print_function
 import tensorflow as tf
@@ -56,7 +55,7 @@ except IndexError:
 
 
 # Setting the random seed
-tf.set_random_seed(5544)
+tf.random.set_seed(5544)
 np.random.seed(5544)
 
 

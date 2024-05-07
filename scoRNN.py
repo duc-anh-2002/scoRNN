@@ -37,7 +37,7 @@ class scoRNNCell(RNNCell):
         A_init = A_init - A_init.T
         A_init = A_init.astype(np.float32)
         
-        self._A = tf.Variable(tf.random.normal([self._hidden_size, self._hidden_size]), name="A", \
+        self._A = tf.compat.v1.get_variable("A", [self._hidden_size, self._hidden_size], \
                   initializer = init_ops.constant_initializer(A_init))
         
         # Initialization of hidden to hidden matrix
@@ -45,12 +45,12 @@ class scoRNNCell(RNNCell):
         Z_init = np.linalg.lstsq(I + A_init, I - A_init)[0].astype(np.float32)
         W_init = np.matmul(Z_init, self._D)
         
-        self._W = tf.Variable(tf.random.normal([self._hidden_size, self._hidden_size]), name="W", \
+        self._W = tf.compat.v1.get_variable("W", [self._hidden_size, self._hidden_size], \
                   initializer = init_ops.constant_initializer(W_init))        
-	#self._W = tf.Variable(W_init, name="W", dtype=tf.float32)
+	
 	
 	    # Initialization of bias
-        self._bias = tf.Variable(tf.zeros([self._hidden_size]), name="b", \
+        self._bias = tf.compat.v1.get_variable("b", [self._hidden_size], \
 	    initializer= init_ops.constant_initializer())
    
     @property
@@ -66,10 +66,9 @@ class scoRNNCell(RNNCell):
             
             # Initialization of input matrix
             U_init = init_ops.random_uniform_initializer(-0.01, 0.01)
-            #U = vs.get_variable("U", [inputs.get_shape()[-1], \
-            #    self._hidden_size], initializer= U_init)
-            U = tf.Variable(U_init(shape=(input_shape, self._hidden_size), dtype=tf.float32), name="U") 
-
+            U = vs.get_variable("U", [inputs.get_shape()[-1], \
+                self._hidden_size], initializer= U_init)
+                       
             # Forward pass of graph           
             res = math_ops.matmul(inputs, U) + math_ops.matmul(state, self._W)
             if self._activation == 'modReLU':
@@ -79,4 +78,3 @@ class scoRNNCell(RNNCell):
                 output = self._activation(nn_ops.bias_add(res, self._bias))
 
         return output, output
-
