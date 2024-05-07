@@ -11,7 +11,7 @@ import tensorflow as tf
 import numpy as np
 import matplotlib.pylab as plt
 import sys
-
+from tensorflow.keras.datasets import mnist
 from scoRNN import *
 
 
@@ -62,19 +62,32 @@ except IndexError:
     pass
 
 # Setting the random seed
-tf.set_random_seed(5544)
+tf.random.set_seed(5544)
 np.random.seed(5544)
 
+# MNIST data
+#from tensorflow.examples.tutorials.mnist import input_data
+#mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
 
-# Import MNIST data
-from tensorflow.examples.tutorials.mnist import input_data
-mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
+#whole_test_data = mnist.test.images.reshape((-1, n_steps, n_input))
+#whole_test_label = mnist.test.labels
 
-whole_test_data = mnist.test.images.reshape((-1, n_steps, n_input))
-whole_test_label = mnist.test.labels
+#test_data = np.split(whole_test_data, 10)
+#test_label = np.split(whole_test_label, 10)
+# Load MNIST dataset
+(x_train, y_train), (x_test, y_test) = mnist.load_data()
 
-test_data = np.split(whole_test_data, 10)
-test_label = np.split(whole_test_label, 10)
+# Reshape and normalize the data
+x_train = x_train.reshape((-1, 28, 28)) / 255.0
+x_test = x_test.reshape((-1, 28, 28)) / 255.0
+
+# Convert labels to one-hot encoding
+y_train = np.eye(10)[y_train]
+y_test = np.eye(10)[y_test]
+
+# Split test data into 10 parts
+test_data = np.split(x_test, 10)
+test_label = np.split(y_test, 10)
 
 
 # Name of save string/scaling matrix
@@ -113,11 +126,14 @@ def RNN(x):
         rnn_cell = scoRNNCell(n_hidden, D = D)
     
     # Place RNN cell into RNN, take last timestep as output
-    outputs, states = tf.nn.dynamic_rnn(rnn_cell, x, dtype=tf.float32)
+    #outputs, states = tf.nn.dynamic_rnn(rnn_cell, x, dtype=tf.float32)
+    rnn_layer = tf.keras.layers.RNN(rnn_cell, return_sequences=True, return_state=True)
+    outputs, states = rnn_layer(x)
     rnnoutput = outputs[:,-1]
     
     # Last layer, linear
-    output = tf.layers.dense(inputs=rnnoutput, units=n_classes, activation=None)
+    #output = tf.keras.layers.Dense(inputs=rnnoutput, units=n_classes, activation=None)
+    output = tf.keras.layers.Dense(units=n_classes, activation=None)(rnnoutput)
     return output
 
 
@@ -163,29 +179,55 @@ def graphlosses(xax, tr_loss, te_loss, tr_acc, te_acc):
 
 
 # Graph input
-x = tf.placeholder("float", [None, n_steps, n_input])
-y = tf.placeholder("float", [None, n_classes])
-    
+#x = tf.placeholder("float", [None, n_steps, n_input])
+#y = tf.placeholder("float", [None, n_classes])
+x = tf.keras.Input(shape=(n_steps, n_input))
+y = tf.keras.Input(shape=(n_classes,))
 
 # Assigning to RNN function
 pred = RNN(x) 
 
     
 # Define loss object
-cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=pred, \
-       labels=y))
+#cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=pred, \
+#       labels=y))
+class SoftmaxCrossEntropy(tf.keras.layers.Layer):
+    def __init__(self):
+        super(SoftmaxCrossEntropy, self).__init__()
+    def call(self, pred, labels):
+        return tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=pred, labels=labels))
 
+cost = SoftmaxCrossEntropy()(pred, y)
     
 # Evaluate model
-correct_pred = tf.equal(tf.argmax(pred,1), tf.argmax(y,1))
-accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
+#correct_pred = tf.equal(tf.argmax(pred,1), tf.argmax(y,1))
 
+# New code
+class Accuracy(tf.keras.layers.Layer):
+    def __init__(self):                
+        super(Accuracy, self).__init__()
+    def call(self, pred, labels):
+        return tf.equal(tf.argmax(pred, 1), tf.argmax(labels, 1))
+
+correct_pred = Accuracy()(pred, y)
+
+# Define a custom Keras layer for casting and averaging
+class CastAndAverage(tf.keras.layers.Layer):
+    def __init__(self):
+        super(CastAndAverage, self).__init__()
+
+    def call(self, inputs):
+        casted_inputs = tf.cast(inputs, tf.float32)
+        return tf.reduce_mean(casted_inputs)
+
+# Use the custom layer
+accuracy = CastAndAverage()(correct_pred)
 
 # Optimizers/Gradients
-optimizer_dict = {'adam' : tf.train.AdamOptimizer,
-                  'adagrad' : tf.train.AdagradOptimizer,
-                  'rmsprop' : tf.train.RMSPropOptimizer,
-                  'sgd' : tf.train.GradientDescentOptimizer}
+optimizer_dict = {'adam' : tf.keras.optimizers.Adam,
+                  'adagrad' : tf.keras.optimizers.Adagrad,
+                  'rmsprop' : tf.keras.optimizers.RMSprop,
+                  'sgd' : tf.keras.optimizers.SGD}
 
 opt1 = optimizer_dict[in_out_optimizer](learning_rate=in_out_lr)
 
@@ -197,9 +239,13 @@ if model == 'LSTM':
 # scoRNN training operations
 if model == 'scoRNN':
     opt2 = optimizer_dict[A_optimizer](learning_rate=A_lr)
-    Wvar = [v for v in tf.trainable_variables() if 'W:0' in v.name][0]
-    Avar = [v for v in tf.trainable_variables() if 'A:0' in v.name][0]
-    othervarlist = [v for v in tf.trainable_variables() if v not in \
+    trainable_vars = model.trainable_variables
+    Wvar = [v for v in trainable_vars if 'W:0' in v.name][0]
+    Avar = [v for v in trainable_vars if 'A:0' in v.name][0]
+
+    #Wvar = [v for v in tf.trainable_variables() if 'W:0' in v.name][0]
+    #Avar = [v for v in tf.trainable_variables() if 'A:0' in v.name][0]
+    othervarlist = [v for v in trainable_vars if v not in \
                    [Wvar, Avar]]
     
     # Getting gradients
@@ -211,12 +257,16 @@ if model == 'scoRNN':
                      othervarlist))  
     
     # Updating variables
-    newW = tf.placeholder(tf.float32, Wvar.get_shape())
-    updateW = tf.assign(Wvar, newW)
-    
+    #newW = tf.placeholder(tf.float32, Wvar.get_shape())
+    #updateW = tf.assign(Wvar, newW)
+    newW = tf.Variable(tf.zeros_like(Wvar), trainable=False)
+    gradA = tf.Variable(tf.zeros_like(Avar), trainable=False)
+
     # Applying hidden-to-hidden gradients
-    gradA = tf.placeholder(tf.float32, Avar.get_shape())
+    updateW = Wvar.assign(newW)
     applygradA = opt2.apply_gradients([(gradA, Avar)])
+    #gradA = tf.placeholder(tf.float32, Avar.get_shape())
+    #applygradA = opt2.apply_gradients([(gradA, Avar)])
 
 # Plotting lists
 epochs_plt = []
