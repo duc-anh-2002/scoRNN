@@ -11,4 +11,6 @@ Due to the changes in the version of tensorflow, I have modified in order to run
 python scoRNN_MNIST.py "your_model" 170 "rmsprop" 1e-3
 ```
 
+```
 Ex: python scoRNN_mnist.py "scoRNN" 170 "rmsprop" 1e-3
+```
