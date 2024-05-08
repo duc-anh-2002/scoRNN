@@ -15,7 +15,7 @@ from tensorflow.keras.datasets import mnist
 from scoRNN import *
 tf.compat.v1.disable_eager_execution()
 from tensorflow import keras
-from keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 # from keras.api.datasets import mnist
 '''
 To classify images using a recurrent neural network, we consider every image
@@ -32,7 +32,7 @@ n_hidden = 170          # Hidden layer size
 n_neg_ones = 17         # No. of -1's to put on diagonal of scaling matrix 
 n_classes = 10          # MNIST total classes (0-9 digits)
 permuteflag = False     # Used for permuted MNIST
-training_epochs = 2
+training_epochs = 70
 batch_size = 50
 
 
@@ -179,6 +179,8 @@ def graphlosses(xax, tr_loss, te_loss, tr_acc, te_acc):
 # Graph input
 x = tf.compat.v1.placeholder("float", [None, n_steps, n_input])
 y = tf.compat.v1.placeholder("float", [None, n_classes])
+#print('x = ', x)
+#print('y = ', y)
     
 
 # Assigning to RNN function
@@ -262,14 +264,12 @@ with tf.compat.v1.Session() as sess:
     while epoch <= training_epochs:
         step = 1
         # Keep training until reach max iterations
-        # while step * batch_size <= mnist.train.images.shape[0]:
         while step * batch_size <= train_images.shape[0]:
             # Getting input data
-            batch_x, batch_y = train_generator.next()
-            # batch_x, batch_y = mnist.train.next_batch(batch_size)
+            batch_x, batch_y = next(train_generator)
             # Reshape data to get 784 seq of 1 pixel
             batch_x = batch_x.reshape((batch_size, n_steps, n_input))
-               
+            # print('batch_x shape = ', batch_x.shape)
             # Updating weights
             if model == 'LSTM':
                 sess.run(LSTMtrain, feed_dict={x: batch_x, y: batch_y})         
@@ -285,15 +285,23 @@ with tf.compat.v1.Session() as sess:
                 sess.run(updateW, feed_dict = {newW: W})
 
             step += 1
-            print("step_inside = ", step)
-        print("step_outside = ", step)
+        #    print("step_inside = ", step)
+        #print("step_outside = ", step)
+        
         # Evaluating average epoch accuracy/loss of model
-        test_acc, test_loss = map(list, zip(*[sess.run([accuracy, cost], \
-                   feed_dict={x: tbatch, y: tlabel}) \
-                   for tbatch, tlabel in zip(test_data, test_label)]))
-        test_acc, test_loss = np.mean(test_acc), np.mean(test_loss)
- 
+        #test_acc, test_loss = map(list, zip(*[sess.run([accuracy, cost], \
+        #           feed_dict={x: tbatch, y: tlabel}) \
+        #           for tbatch, tlabel in zip(test_data, test_label)]))
+        
+        #test_acc, test_loss = np.mean(test_acc), np.mean(test_loss)
+        for iter in range (test_images.shape[0]//batch_size +1):
+            test_x = test_images[iter:iter + batch_size, :]
+            test_y = test_labels[iter:iter + batch_size, :]
+            test_x = test_x.reshape((batch_size, n_steps, n_input))
+            test_acc, test_loss = sess.run([accuracy, cost], \
+                                        feed_dict={x: test_x, y: test_y})
 
+        test_acc, test_loss = np.mean(test_acc), np.mean(test_loss)    
         # Evaluating training accuracy/loss of model on random training batch               
         train_index = np.random.randint(0, \
                       train_images.shape[0]//batch_size + 1)
@@ -319,7 +327,7 @@ with tf.compat.v1.Session() as sess:
         test_loss_plt.append(test_loss)
         train_accuracy_plt.append(train_acc)
         test_accuracy_plt.append(test_acc)
-               
+        print('hello')       
         graphlosses(epochs_plt, train_loss_plt, test_loss_plt, \
                     train_accuracy_plt, test_accuracy_plt)
         
