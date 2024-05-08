@@ -14,14 +14,15 @@ import sys
 from tensorflow.keras.datasets import mnist
 from scoRNN import *
 tf.compat.v1.disable_eager_execution()
-# import os
-# os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-
+from tensorflow import keras
+from keras.preprocessing.image import ImageDataGenerator
+# from keras.api.datasets import mnist
 '''
 To classify images using a recurrent neural network, we consider every image
 as a sequence of single pixels. Because MNIST image shape is 28*28px, we will 
 then handle 784 steps of single pixels for every sample.
 '''
+
 
 # Network parameters
 model = 'scoRNN'
@@ -31,7 +32,7 @@ n_hidden = 170          # Hidden layer size
 n_neg_ones = 17         # No. of -1's to put on diagonal of scaling matrix 
 n_classes = 10          # MNIST total classes (0-9 digits)
 permuteflag = False     # Used for permuted MNIST
-training_epochs = 70
+training_epochs = 2
 batch_size = 50
 
 
@@ -67,19 +68,26 @@ tf.random.set_seed(5544)
 np.random.seed(5544)
 
 # MNIST data
-(x_train, y_train), (x_test, y_test) = mnist.load_data()
+# (x_train, y_train), (x_test, y_test) = mnist.load_data()
 
 # Reshape and normalize the data
-x_train = x_train.reshape((-1, 28, 28)) / 255.0
-x_test = x_test.reshape((-1, 28, 28)) / 255.0
+# x_train = x_train.reshape((-1, 28, 28)) / 255.0
+# x_test = x_test.reshape((-1, 28, 28)) / 255.0
+
+# Load the MNIST dataset
+(train_images, train_labels), (test_images, test_labels) = mnist.load_data()
+
+# Reshape and normalize the input images
+train_images = train_images.reshape(train_images.shape[0], 28, 28, 1).astype('float32') / 255
+test_images = test_images.reshape(test_images.shape[0], 28, 28, 1).astype('float32') / 255
 
 # Convert labels to one-hot encoding
-y_train = np.eye(10)[y_train]
-y_test = np.eye(10)[y_test]
+train_labels = np.eye(10)[train_labels]
+test_labels = np.eye(10)[test_labels]
 
 # Split test data into 10 parts
-test_data = np.split(x_test, 10)
-test_label = np.split(y_test, 10)
+test_data = np.split(train_labels, 10)
+test_label = np.split(test_labels, 10)
 
 
 # Name of save string/scaling matrix
@@ -105,21 +113,11 @@ if permuteflag:
 
 # Defining RNN architecture
 def RNN(x):
-    # Prepare data shape to match `rnn` function requirements
-    # Current data input shape: (batch_size, n_steps, n_input)
-    # Required shape: 'n_steps' tensors list of shape (batch_size, n_input)
-    
-    
-    # Permuting batch_size and n_steps
-    x = tf.transpose(x, [1, 0, 2])
-   
-    # Reshaping to (n_steps*batch_size, n_input)
-    x = tf.reshape(x, [-1, n_input])
-    
-    # Split to get a list of 'n_steps' tensors of shape (batch_size, n_input)
-    x = tf.split(x, n_steps, 0)
-    
-    
+
+    # Assigning fixed permutation, if applicable
+    if permuteflag:
+        x = tf.gather(x, xpermutation, axis=1)
+
     # Create RNN cell
     if model == 'LSTM':
         rnn_cell = tf.contrib.rnn.BasicLSTMCell(n_hidden, activation=tf.nn.tanh)
@@ -127,17 +125,14 @@ def RNN(x):
     if model == 'scoRNN':
         rnn_cell = scoRNNCell(n_hidden, D = D)
     
-    # Place RNN cell into RNN, take last timestep as output    
-    # outputs, states = tf.contrib.rnn.static_rnn(rnn_cell, x, dtype=tf.float32)
-    outputs, states = tf.compat.v1.nn.static_rnn(rnn_cell, x, dtype=tf.float32)
-    rnnoutput = outputs[-1]
+    # Place RNN cell into RNN, take last timestep as output
+    outputs, states = tf.compat.v1.nn.dynamic_rnn(rnn_cell, x, dtype=tf.float32)
+    rnnoutput = outputs[:,-1]
     
-        
     # Last layer, linear
-    # output = tf.layers.Dense(inputs=rnnoutput, units=n_classes, activation=None)
-    output = tf.keras.layers.Dense(units=n_classes, activation=None)(rnnoutput)
+    # output = tf.compat.v1.layers.Dense(inputs=rnnoutput, units=n_classes, activation=None)
+    output = keras.layers.Dense(n_classes, activation=None)(rnnoutput)
     return output
-
 
 
 # Used to calculate Cayley Transform derivative
@@ -182,57 +177,29 @@ def graphlosses(xax, tr_loss, te_loss, tr_acc, te_acc):
 
 
 # Graph input
-# x = tf.Variable(tf.zeros([None, n_steps, n_input]), dtype=tf.float32)
 x = tf.compat.v1.placeholder("float", [None, n_steps, n_input])
 y = tf.compat.v1.placeholder("float", [None, n_classes])
-# x = tf.keras.Input(shape=(n_steps, n_input))
-print('x = ', x)
-# y = tf.keras.Input(shape=(n_classes,))
-print('y = ', y)
+    
+
 # Assigning to RNN function
 pred = RNN(x) 
 
     
 # Define loss object
-#cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=pred, \
-#       labels=y))
-class SoftmaxCrossEntropy(tf.keras.layers.Layer):
-    def __init__(self):
-        super(SoftmaxCrossEntropy, self).__init__()
-    def call(self, pred, labels):
-        return tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=pred, labels=labels))
+cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=pred, \
+       labels=y))
 
-cost = SoftmaxCrossEntropy()(pred, y)
     
 # Evaluate model
-# correct_pred = tf.equal(tf.argmax(pred,1), tf.argmax(y,1))
+correct_pred = tf.equal(tf.argmax(pred,1), tf.argmax(y,1))
+accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
-# New code
-class Accuracy(tf.keras.layers.Layer):
-    def __init__(self):                
-        super(Accuracy, self).__init__()
-    def call(self, pred, labels):
-        return tf.equal(tf.argmax(pred, 1), tf.argmax(labels, 1))
-
-correct_pred = Accuracy()(pred, y)
-
-# Define a custom Keras layer for casting and averaging
-class CastAndAverage(tf.keras.layers.Layer):
-    def __init__(self):
-        super(CastAndAverage, self).__init__()
-
-    def call(self, inputs):
-        casted_inputs = tf.cast(inputs, tf.float32)
-        return tf.reduce_mean(casted_inputs)
-
-# Use the custom layer
-accuracy = CastAndAverage()(correct_pred)
 
 # Optimizers/Gradients
-optimizer_dict = {'adam' : tf.keras.optimizers.Adam,
-                  'adagrad' : tf.keras.optimizers.Adagrad,
-                  'rmsprop' : tf.keras.optimizers.RMSprop,
-                  'sgd' : tf.keras.optimizers.SGD}
+optimizer_dict = {'adam' : tf.compat.v1.train.AdamOptimizer,
+                  'adagrad' : tf.compat.v1.train.AdagradOptimizer,
+                  'rmsprop' : tf.compat.v1.train.RMSPropOptimizer,
+                  'sgd' : tf.compat.v1.train.GradientDescentOptimizer}
 
 opt1 = optimizer_dict[in_out_optimizer](learning_rate=in_out_lr)
 
@@ -244,13 +211,6 @@ if model == 'LSTM':
 # scoRNN training operations
 if model == 'scoRNN':
     opt2 = optimizer_dict[A_optimizer](learning_rate=A_lr)
-    # trainable_vars = model.trainable_variables
-    # Wvar = [v for v in trainable_vars if 'W:0' in v.name][0]
-    # Avar = [v for v in trainable_vars if 'A:0' in v.name][0]
-    
-    # for v in tf.compat.v1.trainable_variables():
-    #     print(v.name)
-        
     Wvar = [v for v in tf.compat.v1.trainable_variables() if 'W:0' in v.name][0]
     Avar = [v for v in tf.compat.v1.trainable_variables() if 'A:0' in v.name][0]
     othervarlist = [v for v in tf.compat.v1.trainable_variables() if v not in \
@@ -267,13 +227,10 @@ if model == 'scoRNN':
     # Updating variables
     newW = tf.compat.v1.placeholder(tf.float32, Wvar.get_shape())
     updateW = tf.compat.v1.assign(Wvar, newW)
-    # newW = tf.Variable(tf.zeros_like(Wvar), trainable=False)
-    # gradA = tf.Variable(tf.zeros_like(Avar), trainable=False)
-    gradA = tf.compat.v1.placeholder(tf.float32, Avar.get_shape())
-    # Applying hidden-to-hidden gradients
-    applygradA = opt2.apply_gradients([(gradA, Avar)])
     
-    # applygradA = opt2.apply_gradients([(gradA, Avar)])
+    # Applying hidden-to-hidden gradients
+    gradA = tf.compat.v1.placeholder(tf.float32, Avar.get_shape())
+    applygradA = opt2.apply_gradients([(gradA, Avar)])
 
 # Plotting lists
 epochs_plt = []
@@ -284,26 +241,32 @@ test_accuracy_plt = []
 
 
 # Training
-with tf.Session() as sess:
+with tf.compat.v1.Session() as sess:
     
     # Initializing the variables
-    init = tf.global_variables_initializer()
+    init = tf.compat.v1.global_variables_initializer()
     sess.run(init)
     
     # Get initial A and W
     if model == 'scoRNN':
         A, W = sess.run([Avar, Wvar])
 
-    
+    # Create an ImageDataGenerator for training data
+    datagen = ImageDataGenerator()
+
+    # Generate batches of augmented data
+    train_generator = datagen.flow(train_images, train_labels, batch_size=batch_size)
+
     # Keep training until reach number of epochs
     epoch = 1
     while epoch <= training_epochs:
         step = 1
         # Keep training until reach max iterations
-        while step * batch_size <= mnist.train.images.shape[0]:
-        
+        # while step * batch_size <= mnist.train.images.shape[0]:
+        while step * batch_size <= train_images.shape[0]:
             # Getting input data
-            batch_x, batch_y = mnist.train.next_batch(batch_size)
+            batch_x, batch_y = train_generator.next()
+            # batch_x, batch_y = mnist.train.next_batch(batch_size)
             # Reshape data to get 784 seq of 1 pixel
             batch_x = batch_x.reshape((batch_size, n_steps, n_input))
                
@@ -322,7 +285,8 @@ with tf.Session() as sess:
                 sess.run(updateW, feed_dict = {newW: W})
 
             step += 1
-
+            print("step_inside = ", step)
+        print("step_outside = ", step)
         # Evaluating average epoch accuracy/loss of model
         test_acc, test_loss = map(list, zip(*[sess.run([accuracy, cost], \
                    feed_dict={x: tbatch, y: tlabel}) \
@@ -332,9 +296,9 @@ with tf.Session() as sess:
 
         # Evaluating training accuracy/loss of model on random training batch               
         train_index = np.random.randint(0, \
-                      mnist.train.images.shape[0]//batch_size + 1)
-        train_x = mnist.train.images[train_index:train_index + batch_size,:]
-        train_y = mnist.train.labels[train_index:train_index + batch_size,:]
+                      train_images.shape[0]//batch_size + 1)
+        train_x = train_images[train_index:train_index + batch_size,:]
+        train_y = train_labels[train_index:train_index + batch_size,:]
         train_x = train_x.reshape((batch_size, n_steps, n_input))
         train_acc, train_loss = sess.run([accuracy, cost], \
                                 feed_dict={x: train_x, y: train_y})
